@@ -53,20 +53,21 @@ type element[T any] struct {
 }
 
 type group[T any] struct {
-	skips                []uint16
-	elements             []T
-	prev, next           *group[T]
-	erasePrev, eraseNext *group[T]
-	size, capacity       uint16
-	freeListHead         uint16
+	skips              []uint16
+	elements           []element[T]
+	prev, next         *group[T]
+	freePrev, freeNext *group[T]
+	size, capacity     uint16
+	freeListHead       uint16
+	groupIndex         uint16
 }
 
-type Gololy[T any] struct {
+type Golony[T any] struct {
 	groups        []*group[T]
 	freeGroupHead *group[T]
 	recycle       *group[T]
 	totalSize     uint32
 	totalCapacity uint32
-	elemSize      int
+	groupSize     uint16
 	zero          T
 }
