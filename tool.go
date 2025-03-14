@@ -62,7 +62,7 @@ func (m *Golony[T]) newGroup() {
 	g, m.recycle = m.recycle, g
 	if g == nil {
 		g = &group[T]{
-			skips:        make([]uint16, m.groupSize),
+			skips:        make([]uint16, m.groupSize+1),
 			elements:     make([]element[T], m.groupSize),
 			size:         0,
 			capacity:     m.groupSize,
@@ -100,4 +100,56 @@ func (m *Golony[T]) newGroup() {
 	m.freeGroupHead = g
 	// step 4. update g
 	m.totalCapacity += uint32(m.groupSize)
+}
+
+func (m *Golony[T]) erase(c FatIndex[T]) (n FatIndex[T], ok bool) {
+	if c.index.check != c.pointer.check {
+		return
+	}
+	g := m.groups[c.index.group]
+	if g == nil {
+		return
+	}
+	m.totalSize--
+	g.size--
+	if g.size != 0 { // not empty after erase
+		before := c.index.offset > 0 && g.skips[c.index.offset-1] != 0
+		after := g.skips[c.index.offset+1] != 0 // no boundary check due to skips array has 1 extra position
+		if !(before || after) {                 // case 1. no need merge skip blocks
+			g.skips[c.index.offset] = 1
+			if g.freeListHead != null {
+				g.elements[g.freeListHead].prev = c.index.offset
+			} else {
+				g.freeNext = m.freeGroupHead
+				if m.freeGroupHead != nil {
+					m.freeGroupHead.freePrev = g
+				}
+				m.freeGroupHead = g
+			}
+			g.elements[c.index.offset].next = g.freeListHead
+			g.freeListHead = c.index.offset
+		} else if before && !after { // case 2. merge skip block with prev
+			v := g.skips[c.index.offset-1] + 1
+			g.skips[c.index.offset] = v
+			g.skips[c.index.offset-v+1] = v
+		} else if !before { // case 3. merge skip block with next
+			v := g.skips[c.index.offset+1] + 1
+			g.skips[c.index.offset] = v
+			g.skips[c.index.offset+v-1] = v
+			pe, ne := g.elements[c.index.offset], g.elements[c.index.offset+1]
+			pe.prev = ne.prev
+			pe.next = ne.next
+			if ne.next != null {
+				g.elements[ne.next].prev = c.index.offset
+			}
+			if ne.prev != null {
+				g.elements[ne.prev].next = c.index.offset
+			} else {
+				g.freeListHead = c.index.offset
+			}
+		} else { // case 4. merge skip block with prev and next
+			g.skips[c.index.offset] = 1 // ensure all skip for erased element is > 0
+			// TODO
+		}
+	}
 }

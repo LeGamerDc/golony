@@ -1,8 +1,9 @@
 package golony
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGolony_Insert(t *testing.T) {

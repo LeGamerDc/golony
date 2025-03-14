@@ -18,7 +18,7 @@ func (m *Golony[T]) Insert(check uint32) (fi FatIndex[T]) {
 			offset: m.freeGroupHead.freeListHead,
 			group:  m.freeGroupHead.groupIndex,
 		},
-		pointer: &pe.v,
+		pointer: pe,
 	}
 	m.updateSkip(&m.freeGroupHead.skips[m.freeGroupHead.freeListHead], pe)
 	pe.check = check

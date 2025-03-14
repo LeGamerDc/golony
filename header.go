@@ -35,7 +35,7 @@ type EraseIndex struct {
 
 type FatIndex[T any] struct {
 	index   Index[T]
-	pointer *T
+	pointer *element[T]
 }
 
 func (f FatIndex[T]) Index() Index[T] {
@@ -43,7 +43,7 @@ func (f FatIndex[T]) Index() Index[T] {
 }
 
 func (f FatIndex[T]) Pointer() *T {
-	return f.pointer
+	return &f.pointer.v
 }
 
 type element[T any] struct {
