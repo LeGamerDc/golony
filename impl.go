@@ -102,7 +102,7 @@ func (m *Golony[T]) newGroup() {
 	m.totalCapacity += uint32(m.groupSize)
 }
 
-func (m *Golony[T]) erase(c FatIndex[T]) (n FatIndex[T], ok bool) {
+func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 	if c.index.check != c.pointer.check {
 		return
 	}
@@ -149,7 +149,20 @@ func (m *Golony[T]) erase(c FatIndex[T]) (n FatIndex[T], ok bool) {
 			}
 		} else { // case 4. merge skip block with prev and next
 			g.skips[c.index.offset] = 1 // ensure all skip for erased element is > 0
-			// TODO
+			pv := g.skips[c.index.offset-1]
+			nv := g.skips[c.index.offset+1] + 1
+			g.skips[c.index.offset-pv] = pv + nv
+			g.skips[c.index.offset+nv-1] = pv + nv
+			ne := g.elements[c.index.offset+1]
+			if ne.next != null {
+				g.elements[ne.next].prev = ne.prev
+			}
+			if ne.prev != null {
+				g.elements[ne.prev].next = ne.next
+			} else {
+				g.freeListHead = ne.next
+			}
 		}
 	}
+	return true
 }

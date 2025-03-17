@@ -26,9 +26,31 @@ func (m *Golony[T]) Insert(check uint32) (fi FatIndex[T]) {
 }
 
 func (m *Golony[T]) Erase(i Index[T]) bool {
+	if fi, ok := m.Get(i); ok && m.erase(fi) {
+		fi.pointer.check = 0
+		fi.pointer.v = m.zero
+		return true
+	}
+	return false
+}
+
+func (m *Golony[T]) EraseFat(fi FatIndex[T]) bool {
+	if m.erase(fi) {
+		fi.pointer.check = 0
+		fi.pointer.v = m.zero
+		return true
+	}
 	return false
 }
 
 func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
+	if g := m.groups[i.group]; g != nil {
+		if v := &g.elements[i.offset]; v.check == i.check {
+			return FatIndex[T]{
+				index:   i,
+				pointer: v,
+			}, true
+		}
+	}
 	return FatIndex[T]{}, false
 }
