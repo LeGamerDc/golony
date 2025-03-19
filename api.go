@@ -62,6 +62,7 @@ func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
 	return FatIndex[T]{}, false
 }
 
+// Iterate 遍历所有元素直到 f 返回 false。注意：不要在 f 中删除当前元素
 func (m *Golony[T]) Iterate(f func(FatIndex[T]) bool) {
 	var (
 		fi FatIndex[T]
