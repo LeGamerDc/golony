@@ -1,6 +1,12 @@
 package golony
 
+const (
+	maxGroupSize uint16 = 1 << 15
+	minGroupSize        = 32
+)
+
 func New[T any](groupSize uint16) *Golony[T] {
+	groupSize = min(maxGroupSize, max(minGroupSize, groupSize))
 	return &Golony[T]{
 		groups:    make([]*group[T], 16),
 		groupSize: groupSize,
@@ -45,7 +51,8 @@ func (m *Golony[T]) EraseFat(fi FatIndex[T]) bool {
 
 func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
 	if g := m.groups[i.group]; g != nil {
-		if v := &g.elements[i.offset]; v.check == i.check {
+		// TODO skips test can be avoided
+		if v := &g.elements[i.offset]; g.skips[i.offset] == 0 && v.check == i.check {
 			return FatIndex[T]{
 				index:   i,
 				pointer: v,
@@ -53,4 +60,25 @@ func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
 		}
 	}
 	return FatIndex[T]{}, false
+}
+
+func (m *Golony[T]) Iterate(f func(FatIndex[T]) bool) {
+	var (
+		fi FatIndex[T]
+		ok bool
+	)
+	for gi, g := range m.groups {
+		if g != nil {
+			if fi, ok = m.begin(g, uint16(gi)); ok {
+				for {
+					if !f(fi) {
+						return
+					}
+					if fi, ok = m.advance(g, fi); !ok {
+						break
+					}
+				}
+			}
+		}
+	}
 }
