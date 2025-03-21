@@ -1,37 +1,32 @@
 package golony
 
 import (
+	"fmt"
 	"math"
-	"unsafe"
 )
 
 const null = math.MaxUint16
 
-func pAdd[T any](p *T, n uint16) *T {
-	var (
-		zero T
-		s    = int(unsafe.Sizeof(zero))
-	)
-	return (*T)(unsafe.Add(unsafe.Pointer(p), int(n)*s))
-}
-
-func (m *Golony[T]) updateSkip(pSkip *uint16, pe *element[T]) {
+func (m *Golony[T]) updateSkip(g *group[T], offset uint16) {
+	pSkip := &g.skips[offset]
+	pe := &g.elements[offset]
 	m.freeGroupHead.size++
 	m.totalSize++
 
 	s := (*pSkip) - 1
 	if s != 0 { // case 1. skip block node len > 1
-		*pAdd(pSkip, s) = s
-		*pAdd(pSkip, 1) = s
+		g.skips[offset+s] = s
+		g.skips[offset+1] = s
 		m.freeGroupHead.freeListHead++
 		if pe.next != null {
-			pAdd(pe, pe.next).prev = m.freeGroupHead.freeListHead
+			g.elements[pe.next].prev = m.freeGroupHead.freeListHead
 		}
-		pAdd(pe, 1).next = pe.next
+		pn := &g.elements[offset+1]
+		pn.prev, pn.next = null, pe.next
 	} else { // case 2. skip block 1 node, remove skip block
 		m.freeGroupHead.freeListHead = pe.next
 		if pe.next != null {
-			pAdd(pe, pe.next).prev = null
+			g.elements[pe.next].prev = null
 		} else {
 			m.freeGroupHead = m.freeGroupHead.freeNext
 		}
@@ -50,6 +45,9 @@ func (g *group[T]) reset(zero bool) {
 	g.freeListHead = 0
 	g.skips[0] = g.capacity
 	g.skips[g.capacity-1] = g.capacity
+	for i := uint16(1); i < g.capacity-1; i++ {
+		g.skips[i] = 1
+	}
 	g.elements[0].prev = null
 	g.elements[0].next = null
 }
@@ -123,74 +121,103 @@ func (m *Golony[T]) advance(g *group[T], c FatIndex[T]) (fi FatIndex[T], ok bool
 	return
 }
 
+func (m *Golony[T]) check(g *group[T], idx Index[T], hint string) {
+	if g == nil {
+		return
+	}
+	count := 0
+	for i := 0; i < int(g.capacity); i++ {
+		if g.skips[i] == 0 {
+			count++
+		}
+	}
+	if count != int(g.size) {
+		goto wrong
+	}
+	for i := uint16(0); i < g.capacity; i++ {
+		x := g.skips[i]
+		if x != 0 {
+			if g.skips[i+x-1] != x {
+				goto wrong
+			}
+			i = i + x - 1
+		}
+	}
+	return
+wrong:
+	for i := 0; i < int(g.capacity); i++ {
+		fmt.Printf("%d ", g.skips[i])
+	}
+	fmt.Println(idx.offset)
+	panic(hint)
+}
+
 func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
+	defer func() {
+		m.check(m.groups[c.index.group], c.Index(), "erase")
+	}()
+
 	if c.index.check != c.pointer.check {
 		return
 	}
 	g := m.groups[c.index.group]
-	if g == nil {
+	if g == nil || g.skips[c.index.offset] != 0 {
 		return
 	}
 	m.totalSize--
 	g.size--
-	if g.size != 0 { // not empty after erase
-		before := c.index.offset > 0 && g.skips[c.index.offset-1] != 0
-		after := g.skips[c.index.offset+1] != 0 // no boundary check due to skips array has 1 extra position
-		if !(before || after) {                 // case 1. no need merge skip blocks
-			g.skips[c.index.offset] = 1
-			if g.freeListHead != null {
-				g.elements[g.freeListHead].prev = c.index.offset
-			} else {
-				g.freeNext = m.freeGroupHead
-				if m.freeGroupHead != nil {
-					m.freeGroupHead.freePrev = g
-				}
-				m.freeGroupHead = g
-			}
-			g.elements[c.index.offset].next = g.freeListHead
-			g.freeListHead = c.index.offset
-		} else if before && !after { // case 2. merge skip block with prev
-			v := g.skips[c.index.offset-1] + 1
-			g.skips[c.index.offset] = v
-			g.skips[c.index.offset-v+1] = v
-		} else if !before { // case 3. merge skip block with next
-			v := g.skips[c.index.offset+1] + 1
-			g.skips[c.index.offset] = v
-			g.skips[c.index.offset+v-1] = v
-			pe, ne := g.elements[c.index.offset], g.elements[c.index.offset+1]
-			pe.prev = ne.prev
-			pe.next = ne.next
-			if ne.next != null {
-				g.elements[ne.next].prev = c.index.offset
-			}
-			if ne.prev != null {
-				g.elements[ne.prev].next = c.index.offset
-			} else {
-				g.freeListHead = c.index.offset
-			}
-		} else { // case 4. merge skip block with prev and next
-			g.skips[c.index.offset] = 1 // ensure all skip for erased element is > 0
-			pv := g.skips[c.index.offset-1]
-			nv := g.skips[c.index.offset+1] + 1
-			g.skips[c.index.offset-pv] = pv + nv
-			g.skips[c.index.offset+nv-1] = pv + nv
-			ne := g.elements[c.index.offset+1]
-			if ne.next != null {
-				g.elements[ne.next].prev = ne.prev
-			}
-			if ne.prev != null {
-				g.elements[ne.prev].next = ne.next
-			} else {
-				g.freeListHead = ne.next
-			}
-		}
-	} else {
+	// if g.size != 0 { // not empty after erase
+	before := c.index.offset > 0 && g.skips[c.index.offset-1] != 0
+	after := g.skips[c.index.offset+1] != 0 // no boundary check due to skips array has 1 extra position
+	if !(before || after) {                 // case 1. no need merge skip blocks
 		g.skips[c.index.offset] = 1
-		g.skips[0] = g.capacity
-		g.skips[g.capacity-1] = g.capacity
-		g.elements[0].prev = null
-		g.elements[0].next = null
-		g.freeListHead = 0
+		if g.freeListHead != null {
+			g.elements[g.freeListHead].prev = c.index.offset
+		} else {
+			g.freeNext = m.freeGroupHead
+			if m.freeGroupHead != nil {
+				m.freeGroupHead.freePrev = g
+			}
+			m.freeGroupHead = g
+		}
+		g.elements[c.index.offset].next = g.freeListHead
+		g.elements[c.index.offset].prev = null
+		g.freeListHead = c.index.offset
+	} else if before && !after { // case 2. merge skip block with prev
+		v := g.skips[c.index.offset-1] + 1
+		g.skips[c.index.offset] = v
+		g.skips[c.index.offset-v+1] = v
+	} else if !before { // case 3. merge skip block with next
+		v := g.skips[c.index.offset+1] + 1
+		g.skips[c.index.offset] = v
+		g.skips[c.index.offset+v-1] = v
+		pe, ne := g.elements[c.index.offset], g.elements[c.index.offset+1]
+		pe.prev = ne.prev
+		pe.next = ne.next
+		if ne.next != null {
+			g.elements[ne.next].prev = c.index.offset
+		}
+		if ne.prev != null {
+			g.elements[ne.prev].next = c.index.offset
+		} else {
+			g.freeListHead = c.index.offset
+		}
+	} else { // case 4. merge skip block with prev and next
+		g.skips[c.index.offset] = 1 // ensure all skip for erased element is > 0
+		pv := g.skips[c.index.offset-1]
+		nv := g.skips[c.index.offset+1] + 1
+		g.skips[c.index.offset-pv] = pv + nv
+		g.skips[c.index.offset+nv-1] = pv + nv
+		ne := g.elements[c.index.offset+1]
+		if ne.next != null {
+			g.elements[ne.next].prev = ne.prev
+		}
+		if ne.prev != null {
+			g.elements[ne.prev].next = ne.next
+		} else {
+			g.freeListHead = ne.next
+		}
 	}
+	// }
 	return true
 }

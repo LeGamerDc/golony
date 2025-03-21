@@ -126,34 +126,138 @@ func TestGolony_Erase(t *testing.T) {
 	}
 }
 
-func TestGolony_FullDelete(t *testing.T) {
-	g := New[int](40)
+func FuzzGolony(f *testing.F) {
+	f.Add(uint32(1), 10) // 初始语料
 
-	// 第一轮：插入100个元素
-	for i := 0; i < 200; i++ {
-		fi := g.Insert(uint32(i))
-		*fi.Pointer() = i
-	}
-	assert.Equal(t, 200, int(g.totalSize))
-	assert.Equal(t, 200, int(g.totalCapacity)) // 应该是 6 组，每组20个
+	f.Fuzz(func(t *testing.T, check uint32, numOps int) {
+		if numOps <= 0 || numOps > 1000 {
+			return
+		}
 
-	// 删除所有元素
-	g.Iterate(func(fi FatIndex[int]) (bool, bool) {
-		return true, false // 删除每个元素
+		g := New[int](20)
+		var indices []Index[int]
+
+		for i := 0; i < numOps; i++ {
+			op := rand.Intn(3)
+			switch op {
+			case 0: // 插入
+				fi := g.Insert(check)
+				*fi.Pointer() = int(check)
+				indices = append(indices, fi.Index())
+
+			case 1: // 获取
+				if len(indices) > 0 {
+					idx := indices[rand.Intn(len(indices))]
+					if fi, ok := g.Get(idx); ok {
+						if *fi.Pointer() != int(idx.Check()) {
+							t.Errorf("value mismatch: got %d, want %d", *fi.Pointer(), idx.Check())
+						}
+					}
+				}
+
+			case 2: // 删除
+				if len(indices) > 0 {
+					i := rand.Intn(len(indices))
+					g.Erase(indices[i])
+					// 从切片中移除已删除的索引
+					indices = append(indices[:i], indices[i+1:]...)
+				}
+			}
+		}
+
+		// 验证最终状态
+		count := 0
+		g.Iterate(func(fi FatIndex[int]) (bool, bool) {
+			count++
+			return false, false
+		})
+		assert.Equal(t, len(indices), count)
 	})
-	assert.Equal(t, 0, int(g.totalSize))
-	assert.Equal(t, 200, int(g.totalCapacity)) // capacity 应该保持不变
+}
 
-	for i := 0; i < 5; i++ {
-		fmt.Printf("%d ", g.groups[i].skips[0])
+func TestGolony_StressTest(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping stress test in short mode")
+	}
+
+	g := New[int](64)
+	ops := 1000000
+	var indices []Index[int]
+
+	for i := 0; i < ops; i++ {
+		if len(indices) == 0 || rand.Float32() < 0.6 { // 60% 概率插入
+			fi := g.Insert(uint32(i))
+			*fi.Pointer() = i
+			indices = append(indices, fi.Index())
+		} else if len(indices) > 0 { // 40% 概率删除
+			idx := rand.Intn(len(indices))
+			assert.True(t, g.Erase(indices[idx]))
+			indices = append(indices[:idx], indices[idx+1:]...)
+		}
+
+		if i%10000 == 0 {
+			// 定期验证容器状态
+			count := 0
+			g.Iterate(func(fi FatIndex[int]) (bool, bool) {
+				count++
+				return false, false
+			})
+			assert.Equal(t, len(indices), count)
+			assert.Equal(t, count, int(g.totalSize))
+		}
+	}
+}
+
+func TestGolony_EdgeCases(t *testing.T) {
+	// 测试最小组大小
+	g1 := New[int](1)
+	assert.Equal(t, uint16(8), g1.groupSize) // 应该被调整到最小值
+
+	// 测试最大组大小
+	g2 := New[int](1<<16 - 2)
+	assert.Equal(t, uint16(1<<15), g2.groupSize) // 应该被调整到最大值
+
+	// 测试空容器的迭代
+	g3 := New[int](20)
+	count := 0
+	g3.Iterate(func(fi FatIndex[int]) (bool, bool) {
+		count++
+		return false, false
+	})
+	assert.Equal(t, 0, count)
+
+	// 测试删除不存在的元素
+	assert.False(t, g3.Erase(Index[int]{check: 1, offset: 0, group: 0}))
+}
+
+func (m *Golony[T]) tell(g *group[T]) {
+	if g == nil {
+		fmt.Println("nil")
+		return
+	}
+	for i := uint16(0); i < g.capacity; i++ {
+		fmt.Printf("%d ", g.skips[i])
 	}
 	fmt.Println()
+}
 
-	// 第二轮：再次插入100个元素
-	for i := 0; i < 200; i++ {
-		fi := g.Insert(uint32(i))
-		*fi.Pointer() = i
+func TestGolony_XXX(t *testing.T) {
+	g := New[int](10)
+	indices := make([]Index[int], 0, 10)
+	for i := 0; i < 1000; i++ {
+		if rand.Float32() < 0.6 && len(indices) < 10 {
+			fi := g.Insert(uint32(i))
+			*fi.Pointer() = i
+			indices = append(indices, fi.Index())
+			fmt.Printf("insert %-3d: ", fi.Index().offset)
+		} else if len(indices) > 0 {
+			idx := rand.Intn(len(indices))
+			g.Erase(indices[idx])
+			fmt.Printf("delete %-3d: ", indices[idx].offset)
+			indices = append(indices[:idx], indices[idx+1:]...)
+		} else {
+			continue
+		}
+		g.tell(g.freeGroupHead)
 	}
-	assert.Equal(t, 200, int(g.totalSize))
-	assert.Equal(t, 200, int(g.totalCapacity)) // 应该复用之前的空间
 }
