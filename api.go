@@ -1,10 +1,8 @@
 package golony
 
-import "fmt"
-
 const (
 	maxGroupSize uint16 = 1 << 15
-	minGroupSize        = 32
+	minGroupSize        = 8
 )
 
 func New[T any](groupSize uint16) *Golony[T] {
@@ -81,10 +79,7 @@ func (m *Golony[T]) Iterate(process ProcessFunc[T]) {
 				e, s := process(i)
 				ni, ok = m.advance(g, i)
 				if e {
-					x := m.erase(i)
-					if !x {
-						fmt.Printf("erase fail g%d o%d c%d pc%d\n", i.index.group, i.index.offset, i.index.check, i.pointer.check)
-					}
+					m.erase(i)
 				}
 				if s {
 					return

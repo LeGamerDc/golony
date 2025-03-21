@@ -80,7 +80,7 @@ func (m *Golony[T]) newGroup() {
 		break
 	}
 	// step 1. place group
-	if idx == -1 {
+	if idx == null {
 		idx = len(m.groups)
 		m.groups = append(m.groups, nil)
 	}
@@ -184,6 +184,13 @@ func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 				g.freeListHead = ne.next
 			}
 		}
+	} else {
+		g.skips[c.index.offset] = 1
+		g.skips[0] = g.capacity
+		g.skips[g.capacity-1] = g.capacity
+		g.elements[0].prev = null
+		g.elements[0].next = null
+		g.freeListHead = 0
 	}
 	return true
 }

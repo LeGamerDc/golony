@@ -1,6 +1,8 @@
 package golony
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,4 +104,56 @@ func TestGolony_Iterate(t *testing.T) {
 	assert.False(t, g.Erase(handles[1].Index()))
 	assert.False(t, g.Erase(handles[7].Index()))
 	assert.Equal(t, []int{1, 3, 5, 9}, values)
+}
+
+func TestGolony_Erase(t *testing.T) {
+	g := New[int](10)
+	for j := 0; j < 200; j++ {
+		var handles []FatIndex[int]
+		for i := 0; i < 1000; i++ {
+			fi := g.Insert(uint32(i))
+			*fi.Pointer() = i
+			handles = append(handles, fi)
+		}
+		rand.Shuffle(len(handles), func(i, j int) {
+			handles[i], handles[j] = handles[j], handles[i]
+		})
+		for i := 0; i < 1000; i++ {
+			assert.True(t, g.Erase(handles[i].Index()))
+		}
+		assert.Equal(t, 0, int(g.totalSize))
+		assert.Equal(t, 1000, int(g.totalCapacity))
+	}
+}
+
+func TestGolony_FullDelete(t *testing.T) {
+	g := New[int](40)
+
+	// 第一轮：插入100个元素
+	for i := 0; i < 200; i++ {
+		fi := g.Insert(uint32(i))
+		*fi.Pointer() = i
+	}
+	assert.Equal(t, 200, int(g.totalSize))
+	assert.Equal(t, 200, int(g.totalCapacity)) // 应该是 6 组，每组20个
+
+	// 删除所有元素
+	g.Iterate(func(fi FatIndex[int]) (bool, bool) {
+		return true, false // 删除每个元素
+	})
+	assert.Equal(t, 0, int(g.totalSize))
+	assert.Equal(t, 200, int(g.totalCapacity)) // capacity 应该保持不变
+
+	for i := 0; i < 5; i++ {
+		fmt.Printf("%d ", g.groups[i].skips[0])
+	}
+	fmt.Println()
+
+	// 第二轮：再次插入100个元素
+	for i := 0; i < 200; i++ {
+		fi := g.Insert(uint32(i))
+		*fi.Pointer() = i
+	}
+	assert.Equal(t, 200, int(g.totalSize))
+	assert.Equal(t, 200, int(g.totalCapacity)) // 应该复用之前的空间
 }
