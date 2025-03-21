@@ -105,7 +105,7 @@ func (m *Golony[T]) newGroup() {
 func (m *Golony[T]) begin(g *group[T], gi uint16) (fi FatIndex[T], ok bool) {
 	if idx := g.skips[0]; idx < g.capacity {
 		return FatIndex[T]{
-			index:   Index[T]{group: gi, offset: idx},
+			index:   Index[T]{group: gi, offset: idx, check: g.elements[idx].check},
 			pointer: &g.elements[idx],
 		}, true
 	}
@@ -116,7 +116,7 @@ func (m *Golony[T]) advance(g *group[T], c FatIndex[T]) (fi FatIndex[T], ok bool
 	idx := c.index.offset + 1
 	if idx = idx + g.skips[idx]; idx < g.capacity {
 		return FatIndex[T]{
-			index:   Index[T]{group: c.index.group, offset: idx},
+			index:   Index[T]{group: c.index.group, offset: idx, check: g.elements[idx].check},
 			pointer: &g.elements[idx],
 		}, true
 	}

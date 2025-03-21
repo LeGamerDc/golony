@@ -44,10 +44,10 @@ func TestGolony_Delete(t *testing.T) {
 		}
 	}
 	vi := 1
-	g.Iterate(func(fi FatIndex[int]) bool {
+	g.Iterate(func(fi FatIndex[int]) (bool, bool) {
 		assert.Equal(t, vi, *fi.Pointer())
 		vi += 2
-		return true
+		return false, false
 	})
 	for i := 0; i < 100; i++ {
 		ok := g.Erase(handles[i].Index())
@@ -58,4 +58,48 @@ func TestGolony_Delete(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 0, int(g.totalSize))
+}
+
+func TestGolony_Iterate(t *testing.T) {
+	g := New[int](20)
+	var handles []FatIndex[int]
+
+	// 插入 10 个元素
+	for i := 0; i < 10; i++ {
+		fi := g.Insert(uint32(i))
+		*fi.Pointer() = i
+		handles = append(handles, fi)
+	}
+
+	// 场景1：在迭代过程中删除当前元素（删除所有偶数）
+	g.Iterate(func(fi FatIndex[int]) (erase bool, stop bool) {
+		if *fi.Pointer()%2 == 0 {
+			return true, false // 删除当前元素，继续迭代
+		}
+		return false, false
+	})
+
+	// 验证只剩下奇数
+	var values []int
+	g.Iterate(func(fi FatIndex[int]) (erase bool, stop bool) {
+		values = append(values, *fi.Pointer())
+		return false, false
+	})
+	assert.Equal(t, []int{1, 3, 5, 7, 9}, values)
+
+	// 场景2：在迭代过程中删除其他元素
+	values = nil
+	g.Iterate(func(fi FatIndex[int]) (erase bool, stop bool) {
+		if fi.Index().Eq(handles[3].Index()) {
+			g.Erase(handles[1].Index())
+			g.Erase(handles[7].Index())
+		}
+		values = append(values, *fi.Pointer())
+		return false, false
+	})
+
+	// 验证最终结果
+	assert.False(t, g.Erase(handles[1].Index()))
+	assert.False(t, g.Erase(handles[7].Index()))
+	assert.Equal(t, []int{1, 3, 5, 9}, values)
 }
