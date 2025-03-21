@@ -1,7 +1,6 @@
 package golony
 
 import (
-	"fmt"
 	"math"
 )
 
@@ -10,25 +9,25 @@ const null = math.MaxUint16
 func (m *Golony[T]) updateSkip(g *group[T], offset uint16) {
 	pSkip := &g.skips[offset]
 	pe := &g.elements[offset]
-	m.freeGroupHead.size++
+	g.size++
 	m.totalSize++
 
 	s := (*pSkip) - 1
 	if s != 0 { // case 1. skip block node len > 1
 		g.skips[offset+s] = s
 		g.skips[offset+1] = s
-		m.freeGroupHead.freeListHead++
+		g.freeListHead++
 		if pe.next != null {
-			g.elements[pe.next].prev = m.freeGroupHead.freeListHead
+			g.elements[pe.next].prev = g.freeListHead
 		}
 		pn := &g.elements[offset+1]
 		pn.prev, pn.next = null, pe.next
 	} else { // case 2. skip block 1 node, remove skip block
-		m.freeGroupHead.freeListHead = pe.next
+		g.freeListHead = pe.next
 		if pe.next != null {
 			g.elements[pe.next].prev = null
 		} else {
-			m.freeGroupHead = m.freeGroupHead.freeNext
+			m.freeGroupHead = g.freeNext
 		}
 	}
 	*pSkip = 0
@@ -121,42 +120,7 @@ func (m *Golony[T]) advance(g *group[T], c FatIndex[T]) (fi FatIndex[T], ok bool
 	return
 }
 
-func (m *Golony[T]) check(g *group[T], idx Index[T], hint string) {
-	if g == nil {
-		return
-	}
-	count := 0
-	for i := 0; i < int(g.capacity); i++ {
-		if g.skips[i] == 0 {
-			count++
-		}
-	}
-	if count != int(g.size) {
-		goto wrong
-	}
-	for i := uint16(0); i < g.capacity; i++ {
-		x := g.skips[i]
-		if x != 0 {
-			if g.skips[i+x-1] != x {
-				goto wrong
-			}
-			i = i + x - 1
-		}
-	}
-	return
-wrong:
-	for i := 0; i < int(g.capacity); i++ {
-		fmt.Printf("%d ", g.skips[i])
-	}
-	fmt.Println(idx.offset)
-	panic(hint)
-}
-
 func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
-	defer func() {
-		m.check(m.groups[c.index.group], c.Index(), "erase")
-	}()
-
 	if c.index.check != c.pointer.check {
 		return
 	}
@@ -173,7 +137,7 @@ func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 		g.skips[c.index.offset] = 1
 		if g.freeListHead != null {
 			g.elements[g.freeListHead].prev = c.index.offset
-		} else {
+		} else { // first slot
 			g.freeNext = m.freeGroupHead
 			if m.freeGroupHead != nil {
 				m.freeGroupHead.freePrev = g
@@ -191,7 +155,7 @@ func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 		v := g.skips[c.index.offset+1] + 1
 		g.skips[c.index.offset] = v
 		g.skips[c.index.offset+v-1] = v
-		pe, ne := g.elements[c.index.offset], g.elements[c.index.offset+1]
+		pe, ne := &g.elements[c.index.offset], &g.elements[c.index.offset+1]
 		pe.prev = ne.prev
 		pe.next = ne.next
 		if ne.next != null {
@@ -205,10 +169,10 @@ func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 	} else { // case 4. merge skip block with prev and next
 		g.skips[c.index.offset] = 1 // ensure all skip for erased element is > 0
 		pv := g.skips[c.index.offset-1]
-		nv := g.skips[c.index.offset+1] + 1
-		g.skips[c.index.offset-pv] = pv + nv
-		g.skips[c.index.offset+nv-1] = pv + nv
-		ne := g.elements[c.index.offset+1]
+		nv := g.skips[c.index.offset+1]
+		g.skips[c.index.offset-pv] = pv + nv + 1
+		g.skips[c.index.offset+nv] = pv + nv + 1
+		ne := &g.elements[c.index.offset+1]
 		if ne.next != null {
 			g.elements[ne.next].prev = ne.prev
 		}

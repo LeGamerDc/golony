@@ -15,10 +15,6 @@ func New[T any](groupSize uint16) *Golony[T] {
 
 // Insert 插入一个元素，返回元素的索引
 func (m *Golony[T]) Insert(check uint32) (fi FatIndex[T]) {
-	defer func() {
-		m.check(m.freeGroupHead, fi.index, "insert")
-	}()
-
 	if m.freeGroupHead == nil { // no free group, create one
 		m.newGroup()
 	}

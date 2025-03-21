@@ -1,7 +1,6 @@
 package golony
 
 import (
-	"fmt"
 	"math/rand"
 	"testing"
 
@@ -228,36 +227,4 @@ func TestGolony_EdgeCases(t *testing.T) {
 
 	// 测试删除不存在的元素
 	assert.False(t, g3.Erase(Index[int]{check: 1, offset: 0, group: 0}))
-}
-
-func (m *Golony[T]) tell(g *group[T]) {
-	if g == nil {
-		fmt.Println("nil")
-		return
-	}
-	for i := uint16(0); i < g.capacity; i++ {
-		fmt.Printf("%d ", g.skips[i])
-	}
-	fmt.Println()
-}
-
-func TestGolony_XXX(t *testing.T) {
-	g := New[int](10)
-	indices := make([]Index[int], 0, 10)
-	for i := 0; i < 1000; i++ {
-		if rand.Float32() < 0.6 && len(indices) < 10 {
-			fi := g.Insert(uint32(i))
-			*fi.Pointer() = i
-			indices = append(indices, fi.Index())
-			fmt.Printf("insert %-3d: ", fi.Index().offset)
-		} else if len(indices) > 0 {
-			idx := rand.Intn(len(indices))
-			g.Erase(indices[idx])
-			fmt.Printf("delete %-3d: ", indices[idx].offset)
-			indices = append(indices[:idx], indices[idx+1:]...)
-		} else {
-			continue
-		}
-		g.tell(g.freeGroupHead)
-	}
 }
