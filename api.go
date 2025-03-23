@@ -8,7 +8,7 @@ const (
 func New[T any](groupSize uint16) *Golony[T] {
 	groupSize = min(maxGroupSize, max(minGroupSize, groupSize))
 	return &Golony[T]{
-		groups:    make([]*group[T], 16),
+		groups:    make([]*group[T], 0, 16),
 		groupSize: groupSize,
 	}
 }
@@ -54,6 +54,9 @@ func (m *Golony[T]) EraseFat(fi FatIndex[T]) bool {
 
 // Get 获取一个元素，返回FatIndex已经判断Index是否失效
 func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
+	if i.group >= uint16(len(m.groups)) {
+		return FatIndex[T]{}, false
+	}
 	if g := m.groups[i.group]; g != nil {
 		// TODO skips test can be avoided
 		if v := &g.elements[i.offset]; g.skips[i.offset] == 0 && v.check == i.check {
@@ -88,4 +91,41 @@ func (m *Golony[T]) Iterate(process ProcessFunc[T]) {
 			}
 		}
 	}
+}
+
+// IterateGroup 遍历一个group中的所有元素直到process返回stop，途中process返回erase会导致当前元素被删除。
+// 用户可以用这个接口来分批次遍历
+func (m *Golony[T]) IterateGroup(idx int, process ProcessFunc[T]) {
+	if idx < 0 || idx >= len(m.groups) || m.groups[idx] == nil {
+		return
+	}
+	var (
+		i, ni FatIndex[T]
+		g     = m.groups[idx]
+		ok    bool
+	)
+
+	for i, ok = m.begin(g, uint16(idx)); ok; {
+		e, s := process(i)
+		ni, ok = m.advance(g, i)
+		if e {
+			m.erase(i)
+		}
+		if s {
+			return
+		}
+		i = ni
+	}
+}
+
+func (m *Golony[T]) GroupNum() int {
+	return len(m.groups)
+}
+
+func (m *Golony[T]) Size() int {
+	return int(m.totalSize)
+}
+
+func (m *Golony[T]) Capacity() int {
+	return int(m.totalCapacity)
 }
