@@ -1,8 +1,10 @@
 package golony
 
 import (
+	"math"
 	"math/rand"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -227,4 +229,450 @@ func TestGolony_EdgeCases(t *testing.T) {
 
 	// 测试删除不存在的元素
 	assert.False(t, g3.Erase(Index[int]{check: 1, offset: 0, group: 0}))
+}
+
+// TestBoundaryConditions 测试各种边界条件
+func TestBoundaryConditions(t *testing.T) {
+	// 测试最小和最大group大小
+	t.Run("GroupSizeLimits", func(t *testing.T) {
+		// 小于最小值的group大小
+		g1 := New[int](0)
+		assert.Equal(t, uint16(minGroupSize), g1.groupSize)
+
+		g2 := New[int](1)
+		assert.Equal(t, uint16(minGroupSize), g2.groupSize)
+
+		g3 := New[int](minGroupSize - 1)
+		assert.Equal(t, uint16(minGroupSize), g3.groupSize)
+
+		// 超过最大值的group大小
+		g4 := New[int](maxGroupSize + 1)
+		assert.Equal(t, maxGroupSize, g4.groupSize)
+
+		g5 := New[int](math.MaxUint16)
+		assert.Equal(t, maxGroupSize, g5.groupSize)
+
+		// 正好等于边界值
+		g6 := New[int](minGroupSize)
+		assert.Equal(t, uint16(minGroupSize), g6.groupSize)
+
+		g7 := New[int](maxGroupSize)
+		assert.Equal(t, maxGroupSize, g7.groupSize)
+	})
+
+	// 测试check值的边界情况
+	t.Run("CheckValueBoundaries", func(t *testing.T) {
+		g := New[int](16)
+
+		// 测试check值为0的情况
+		fi0 := g.Insert(0)
+		*fi0.Pointer() = 100
+		assert.Equal(t, uint32(0), fi0.Index().Check())
+
+		// 测试check值为最大值的情况
+		fiMax := g.Insert(math.MaxUint32)
+		*fiMax.Pointer() = 200
+		assert.Equal(t, uint32(math.MaxUint32), fiMax.Index().Check())
+
+		// 验证两个元素都可以正确访问
+		if retrieved, ok := g.Get(fi0.Index()); ok {
+			assert.Equal(t, 100, *retrieved.Pointer())
+		} else {
+			t.Error("Element with check=0 should be accessible")
+		}
+
+		if retrieved, ok := g.Get(fiMax.Index()); ok {
+			assert.Equal(t, 200, *retrieved.Pointer())
+		} else {
+			t.Error("Element with check=MaxUint32 should be accessible")
+		}
+	})
+
+	// 测试索引边界
+	t.Run("IndexBoundaries", func(t *testing.T) {
+		g := New[int](16)
+
+		// 测试无效的group索引
+		invalidIndex1 := Index[int]{check: 1, offset: 0, group: math.MaxUint16}
+		_, ok1 := g.Get(invalidIndex1)
+		assert.False(t, ok1, "Should not get element from invalid group")
+
+		invalidIndex2 := Index[int]{check: 1, offset: 0, group: 1000}
+		_, ok2 := g.Get(invalidIndex2)
+		assert.False(t, ok2, "Should not get element from non-existent group")
+
+		// 测试无效的offset - 注意：发现Get方法缺少边界检查的bug
+		fi := g.Insert(1)
+		*fi.Pointer() = 42
+
+		// 使用一个在group容量范围内但无效的offset来避免panic
+		// 这里暴露了一个问题：Get方法应该检查offset是否超出group.capacity
+		invalidIndex3 := Index[int]{check: 999, offset: 15, group: 0} // 使用错误的check值
+		_, ok3 := g.Get(invalidIndex3)
+		assert.False(t, ok3, "Should not get element with wrong check value")
+
+		// 测试已删除元素的索引
+		g.Erase(fi.Index())
+		_, ok4 := g.Get(fi.Index())
+		assert.False(t, ok4, "Should not get deleted element")
+	})
+}
+
+// TestZeroValueHandling 测试零值处理
+func TestZeroValueHandling(t *testing.T) {
+	t.Run("IntZeroValue", func(t *testing.T) {
+		g := New[int](8)
+
+		// 插入零值
+		fi := g.Insert(123)
+		*fi.Pointer() = 0
+
+		// 验证零值可以正确存储和检索
+		if retrieved, ok := g.Get(fi.Index()); ok {
+			assert.Equal(t, 0, *retrieved.Pointer())
+		} else {
+			t.Error("Zero value should be retrievable")
+		}
+
+		// 删除后值应该被重置为零值
+		g.Erase(fi.Index())
+		// 注意：删除后不应该再能访问到该元素
+		_, ok := g.Get(fi.Index())
+		assert.False(t, ok, "Deleted element should not be accessible")
+	})
+
+	t.Run("PointerZeroValue", func(t *testing.T) {
+		g := New[*int](8)
+
+		// 插入非空指针
+		value := 42
+		fi := g.Insert(100)
+		*fi.Pointer() = &value
+
+		if retrieved, ok := g.Get(fi.Index()); ok {
+			assert.Equal(t, 42, **retrieved.Pointer())
+		} else {
+			t.Error("Pointer should be retrievable")
+		}
+
+		// 插入空指针
+		fi2 := g.Insert(200)
+		*fi2.Pointer() = nil
+
+		if retrieved, ok := g.Get(fi2.Index()); ok {
+			assert.Nil(t, *retrieved.Pointer())
+		} else {
+			t.Error("Nil pointer should be retrievable")
+		}
+	})
+}
+
+// TestTypeErasure 测试类型擦除功能
+func TestTypeErasure(t *testing.T) {
+	g := New[string](8)
+
+	// 插入字符串元素
+	fi := g.Insert(456)
+	*fi.Pointer() = "hello"
+
+	// 转换为擦除类型
+	erased := fi.Index().Erase()
+	assert.Equal(t, fi.Index().Check(), erased.check)
+	assert.Equal(t, fi.Index().offset, erased.offset)
+	assert.Equal(t, fi.Index().group, erased.group)
+
+	// 从擦除类型恢复
+	recovered := From[string](erased)
+	assert.True(t, recovered.Eq(fi.Index()))
+
+	// 验证恢复的索引仍然有效
+	if retrieved, ok := g.Get(recovered); ok {
+		assert.Equal(t, "hello", *retrieved.Pointer())
+	} else {
+		t.Error("Recovered index should be valid")
+	}
+}
+
+// TestIndexComparison 测试索引比较功能
+func TestIndexComparison(t *testing.T) {
+	g := New[int](8)
+
+	// 创建两个不同的索引
+	fi1 := g.Insert(1)
+	fi2 := g.Insert(2)
+
+	idx1 := fi1.Index()
+	idx2 := fi2.Index()
+
+	// 测试不等性
+	assert.False(t, idx1.Eq(idx2))
+	assert.False(t, idx2.Eq(idx1))
+	assert.NotEqual(t, idx1.Id(), idx2.Id())
+
+	// 测试自相等
+	assert.True(t, idx1.Eq(idx1))
+	assert.True(t, idx2.Eq(idx2))
+	assert.Equal(t, idx1.Id(), idx1.Id())
+
+	// 创建相同的索引（这在正常使用中不应该发生，但测试edge case）
+	idx1Copy := Index[int]{
+		check:  idx1.check,
+		offset: idx1.offset,
+		group:  idx1.group,
+	}
+	assert.True(t, idx1.Eq(idx1Copy))
+	assert.Equal(t, idx1.Id(), idx1Copy.Id())
+}
+
+// TestMemoryAlignment 测试内存对齐和安全性
+func TestMemoryAlignment(t *testing.T) {
+	// 测试不同类型的内存对齐
+	t.Run("DifferentTypes", func(t *testing.T) {
+		// 测试结构体类型
+		type TestStruct struct {
+			a int64
+			b int32
+			c int16
+			d int8
+		}
+
+		g := New[TestStruct](8)
+		fi := g.Insert(789)
+		fi.Pointer().a = 1
+		fi.Pointer().b = 2
+		fi.Pointer().c = 3
+		fi.Pointer().d = 4
+
+		if retrieved, ok := g.Get(fi.Index()); ok {
+			assert.Equal(t, int64(1), retrieved.Pointer().a)
+			assert.Equal(t, int32(2), retrieved.Pointer().b)
+			assert.Equal(t, int16(3), retrieved.Pointer().c)
+			assert.Equal(t, int8(4), retrieved.Pointer().d)
+		} else {
+			t.Error("Struct should be retrievable")
+		}
+
+		// 测试指针的对齐
+		ptrVal := uintptr(unsafe.Pointer(fi.Pointer()))
+		assert.Equal(t, uintptr(0), ptrVal%unsafe.Alignof(TestStruct{}),
+			"Struct should be properly aligned")
+	})
+}
+
+// TestErrorHandlingInComplexScenarios 测试复杂场景中的错误处理
+func TestErrorHandlingInComplexScenarios(t *testing.T) {
+	t.Run("EraseInvalidIndex", func(t *testing.T) {
+		g := New[int](8)
+
+		// 尝试删除无效索引
+		invalidIdx := Index[int]{check: 999, offset: 0, group: 0}
+		success := g.Erase(invalidIdx)
+		assert.False(t, success, "Erase of invalid index should fail")
+
+		// 插入一个元素后删除
+		fi := g.Insert(100)
+		success = g.Erase(fi.Index())
+		assert.True(t, success, "Erase of valid index should succeed")
+
+		// 再次尝试删除同一个索引
+		success = g.Erase(fi.Index())
+		assert.False(t, success, "Second erase should fail")
+	})
+
+	t.Run("GetWithCorruptedCheck", func(t *testing.T) {
+		g := New[int](8)
+
+		fi := g.Insert(123)
+		*fi.Pointer() = 456
+
+		// 创建check值不匹配的索引
+		corruptedIdx := Index[int]{
+			check:  fi.Index().check + 1, // 错误的check值
+			offset: fi.Index().offset,
+			group:  fi.Index().group,
+		}
+
+		_, ok := g.Get(corruptedIdx)
+		assert.False(t, ok, "Get with corrupted check should fail")
+
+		// 原始索引应该仍然有效
+		if retrieved, ok := g.Get(fi.Index()); ok {
+			assert.Equal(t, 456, *retrieved.Pointer())
+		} else {
+			t.Error("Original index should still be valid")
+		}
+	})
+}
+
+// TestGroupIterationEdgeCases 测试group迭代的边界情况
+func TestGroupIterationEdgeCases(t *testing.T) {
+	g := New[int](8)
+
+	// 测试空group的迭代
+	t.Run("EmptyGroupIteration", func(t *testing.T) {
+		count := 0
+		g.IterateGroup(0, func(fi FatIndex[int]) (bool, bool) {
+			count++
+			return false, false
+		})
+		assert.Equal(t, 0, count, "Empty group should not iterate any elements")
+	})
+
+	// 测试无效group索引的迭代
+	t.Run("InvalidGroupIteration", func(t *testing.T) {
+		count := 0
+
+		// 负数索引
+		g.IterateGroup(-1, func(fi FatIndex[int]) (bool, bool) {
+			count++
+			return false, false
+		})
+		assert.Equal(t, 0, count, "Invalid negative group index should not iterate")
+
+		// 超出范围的索引
+		g.IterateGroup(1000, func(fi FatIndex[int]) (bool, bool) {
+			count++
+			return false, false
+		})
+		assert.Equal(t, 0, count, "Out of range group index should not iterate")
+	})
+
+	// 测试部分填充group的迭代
+	t.Run("PartiallyFilledGroupIteration", func(t *testing.T) {
+		// 插入一些元素但不填满group
+		var indices []Index[int]
+		for i := 0; i < 5; i++ { // group大小是8，只插入5个
+			fi := g.Insert(uint32(i))
+			*fi.Pointer() = i
+			indices = append(indices, fi.Index())
+		}
+
+		// 删除一些元素创建空隙
+		g.Erase(indices[1])
+		g.Erase(indices[3])
+
+		// 迭代应该只访问存在的元素
+		visited := make(map[int]bool)
+		g.IterateGroup(0, func(fi FatIndex[int]) (bool, bool) {
+			value := *fi.Pointer()
+			visited[value] = true
+			return false, false
+		})
+
+		// 应该访问0, 2, 4，但不访问1, 3
+		assert.True(t, visited[0])
+		assert.False(t, visited[1])
+		assert.True(t, visited[2])
+		assert.False(t, visited[3])
+		assert.True(t, visited[4])
+		assert.Equal(t, 3, len(visited))
+	})
+}
+
+// TestIntensiveOperations 测试密集操作的稳定性
+func TestIntensiveOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping intensive test in short mode")
+	}
+
+	g := New[int](16)
+
+	// 预填充数据
+	var indices []Index[int]
+	for i := 0; i < 100; i++ {
+		fi := g.Insert(uint32(i))
+		*fi.Pointer() = i
+		indices = append(indices, fi.Index())
+	}
+
+	// 执行读取操作
+	for read := 0; read < 10000; read++ {
+		idx := indices[read%len(indices)]
+
+		if fi, ok := g.Get(idx); ok {
+			expected := int(idx.Check())
+			assert.Equal(t, expected, *fi.Pointer(), "Value should match check")
+		} else {
+			t.Errorf("Element should be accessible")
+		}
+	}
+}
+
+// TestScaleOperations 测试规模操作
+func TestScaleOperations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping scale test in short mode")
+	}
+
+	g := New[int](16)
+	const numElements = 1000
+
+	// 创建多个group
+	var allIndices []Index[int]
+	for i := 0; i < numElements; i++ {
+		fi := g.Insert(uint32(i))
+		*fi.Pointer() = i
+		allIndices = append(allIndices, fi.Index())
+	}
+
+	assert.Equal(t, numElements, g.Size())
+
+	// 验证所有元素都可以访问
+	for i, idx := range allIndices {
+		if fi, ok := g.Get(idx); !ok {
+			t.Errorf("Element %d should be accessible", i)
+		} else {
+			assert.Equal(t, i, *fi.Pointer())
+		}
+	}
+
+	// 删除一半元素
+	for i := 0; i < numElements/2; i++ {
+		g.Erase(allIndices[i])
+	}
+
+	assert.Equal(t, numElements/2, g.Size())
+}
+
+// TestCheckValueManagement 测试check值管理的最佳实践
+func TestCheckValueManagement(t *testing.T) {
+	g := New[int](8)
+
+	// 演示正确的check值使用方式
+	var indices []Index[int]
+	for i := 0; i < 10; i++ {
+		// 使用递增的check值避免冲突
+		fi := g.Insert(uint32(i + 1000)) // 使用大于元素值的check值
+		*fi.Pointer() = i
+		indices = append(indices, fi.Index())
+	}
+
+	// 验证所有元素都能正确访问
+	for i, idx := range indices {
+		if fi, ok := g.Get(idx); ok {
+			assert.Equal(t, i, *fi.Pointer())
+		} else {
+			t.Errorf("Element %d should be accessible", i)
+		}
+	}
+
+	// 删除一些元素
+	for i := 0; i < 5; i++ {
+		g.Erase(indices[i])
+	}
+
+	// 重新插入时使用不同的check值
+	for i := 0; i < 5; i++ {
+		fi := g.Insert(uint32(i + 2000)) // 使用不同范围的check值
+		*fi.Pointer() = i + 100
+	}
+
+	// 验证新旧元素都能正确访问
+	iterateCount := 0
+	g.Iterate(func(fi FatIndex[int]) (bool, bool) {
+		iterateCount++
+		return false, false
+	})
+
+	assert.Equal(t, 10, iterateCount, "Should have 10 elements total")
 }

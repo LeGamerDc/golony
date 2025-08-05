@@ -58,7 +58,10 @@ func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
 		return FatIndex[T]{}, false
 	}
 	if g := m.groups[i.group]; g != nil {
-		// TODO skips test can be avoided
+		// 添加边界检查，防止数组越界
+		if i.offset >= g.capacity {
+			return FatIndex[T]{}, false
+		}
 		if v := &g.elements[i.offset]; g.skips[i.offset] == 0 && v.check == i.check {
 			return FatIndex[T]{
 				index:   i,
