@@ -127,6 +127,118 @@ func TestGolony_Erase(t *testing.T) {
 	}
 }
 
+func TestGolony_EraseFatValidation(t *testing.T) {
+	t.Run("ValidFatIndex", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(10)
+		*fi.Pointer() = 99
+
+		assert.True(t, g.EraseFat(fi))
+		_, ok := g.Get(fi.Index())
+		assert.False(t, ok)
+	})
+
+	t.Run("ZeroValueFatIndex", func(t *testing.T) {
+		g := New[int](8)
+		assert.False(t, g.EraseFat(FatIndex[int]{}))
+	})
+
+	t.Run("ForeignFatIndex", func(t *testing.T) {
+		a := New[int](8)
+		b := New[int](8)
+
+		fa := a.Insert(123)
+		*fa.Pointer() = 1
+
+		fb := b.Insert(456)
+		*fb.Pointer() = 2
+
+		assert.False(t, b.EraseFat(fa))
+
+		retrieved, ok := b.Get(fb.Index())
+		assert.True(t, ok)
+		assert.Equal(t, 2, *retrieved.Pointer())
+	})
+}
+
+func TestGolony_GroupLimit(t *testing.T) {
+	g := New[int](8)
+	g.groups = make([]*group[int], maxGroupCount)
+
+	dummy := &group[int]{}
+	for i := range g.groups {
+		g.groups[i] = dummy
+	}
+
+	assert.PanicsWithValue(t, "golony: group index exceeds uint16 range", func() {
+		g.Insert(1)
+	})
+}
+
+func TestGolony_MetadataAndStopSemantics(t *testing.T) {
+	t.Run("Counters", func(t *testing.T) {
+		g := New[int](8)
+		assert.Equal(t, 0, g.GroupNum())
+		assert.Equal(t, 0, g.Capacity())
+
+		for i := 0; i < 9; i++ {
+			fi := g.Insert(uint32(i + 1))
+			*fi.Pointer() = i
+		}
+
+		assert.Equal(t, 2, g.GroupNum())
+		assert.Equal(t, 16, g.Capacity())
+		assert.Equal(t, 9, g.Size())
+	})
+
+	t.Run("IterateStop", func(t *testing.T) {
+		g := New[int](8)
+		for i := 0; i < 5; i++ {
+			fi := g.Insert(uint32(i + 1))
+			*fi.Pointer() = i
+		}
+
+		visited := 0
+		g.Iterate(func(fi FatIndex[int]) (bool, bool) {
+			visited++
+			return false, visited == 3
+		})
+
+		assert.Equal(t, 3, visited)
+	})
+
+	t.Run("IterateGroupStop", func(t *testing.T) {
+		g := New[int](8)
+		for i := 0; i < 5; i++ {
+			fi := g.Insert(uint32(i + 1))
+			*fi.Pointer() = i
+		}
+
+		visited := 0
+		g.IterateGroup(0, func(fi FatIndex[int]) (bool, bool) {
+			visited++
+			return false, visited == 2
+		})
+
+		assert.Equal(t, 2, visited)
+	})
+}
+
+func TestGolony_IterateEraseClearsElement(t *testing.T) {
+	g := New[*int](8)
+
+	value := 42
+	fi := g.Insert(1)
+	*fi.Pointer() = &value
+
+	g.Iterate(func(current FatIndex[*int]) (bool, bool) {
+		return current.Index().Eq(fi.Index()), false
+	})
+
+	assert.Equal(t, uint32(0), g.groups[0].elements[0].check)
+	assert.Nil(t, g.groups[0].elements[0].v)
+}
+
 func FuzzGolony(f *testing.F) {
 	f.Add(uint32(1), 10) // 初始语料
 

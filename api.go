@@ -13,7 +13,8 @@ func New[T any](groupSize uint16) *Golony[T] {
 	}
 }
 
-// Insert 插入一个元素，返回元素的索引
+// Insert 插入一个元素，返回元素的索引。
+// check 由调用方提供，必须保证不会与仍可能被持有的旧 Index 重复。
 func (m *Golony[T]) Insert(check uint32) (fi FatIndex[T]) {
 	if m.freeGroupHead == nil { // no free group, create one
 		m.newGroup()
@@ -34,27 +35,23 @@ func (m *Golony[T]) Insert(check uint32) (fi FatIndex[T]) {
 
 // Erase 使用Index删除一个元素，返回是否删除成功
 func (m *Golony[T]) Erase(i Index[T]) bool {
-	if fi, ok := m.Get(i); ok && m.erase(fi) {
-		fi.pointer.check = 0
-		fi.pointer.v = m.zero
-		return true
+	if fi, ok := m.Get(i); ok {
+		return m.eraseAndClear(fi)
 	}
 	return false
 }
 
 // EraseFat 使用FatIndex删除一个元素，返回是否删除成功
 func (m *Golony[T]) EraseFat(fi FatIndex[T]) bool {
-	if m.erase(fi) {
-		fi.pointer.check = 0
-		fi.pointer.v = m.zero
-		return true
+	if !m.validFatIndex(fi) {
+		return false
 	}
-	return false
+	return m.eraseAndClear(fi)
 }
 
 // Get 获取一个元素，返回FatIndex已经判断Index是否失效
 func (m *Golony[T]) Get(i Index[T]) (fi FatIndex[T], ok bool) {
-	if i.group >= uint16(len(m.groups)) {
+	if int(i.group) >= len(m.groups) {
 		return FatIndex[T]{}, false
 	}
 	if g := m.groups[i.group]; g != nil {
@@ -85,7 +82,7 @@ func (m *Golony[T]) Iterate(process ProcessFunc[T]) {
 				e, s := process(i)
 				ni, ok = m.advance(g, i)
 				if e {
-					m.erase(i)
+					m.eraseAndClear(i)
 				}
 				if s {
 					return
@@ -112,7 +109,7 @@ func (m *Golony[T]) IterateGroup(idx int, process ProcessFunc[T]) {
 		e, s := process(i)
 		ni, ok = m.advance(g, i)
 		if e {
-			m.erase(i)
+			m.eraseAndClear(i)
 		}
 		if s {
 			return

@@ -5,6 +5,7 @@ import "unsafe"
 type (
 	// Index 引用，可以用于在Golony中查找元素，check用来验证引用是否失效
 	// Index 可以被用户用于在其他任何地方保存元素的引用。
+	// check 由调用方维护，必须保证不会和仍可能被持有的旧引用重复。
 	Index[T any] struct {
 		_             [0]*T // prevent wrong conversions
 		check         uint32
@@ -27,7 +28,7 @@ type (
 		recycle       *group[T]
 		totalSize     uint32
 		totalCapacity uint32
-		groupSize     uint16
+		groupSize     uint16 // group index is uint16, so at most 65536 groups can exist
 		zero          T
 	}
 	ProcessFunc[T any] func(index FatIndex[T]) (erase, stop bool)

@@ -4,7 +4,10 @@ import (
 	"math"
 )
 
-const null = math.MaxUint16
+const (
+	null          = math.MaxUint16
+	maxGroupCount = int(math.MaxUint16) + 1
+)
 
 func (m *Golony[T]) updateSkip(g *group[T], offset uint16) {
 	pSkip := &g.skips[offset]
@@ -78,6 +81,9 @@ func (m *Golony[T]) newGroup() {
 	}
 	// step 1. place group
 	if idx == null {
+		if len(m.groups) >= maxGroupCount {
+			panic("golony: group index exceeds uint16 range")
+		}
 		idx = len(m.groups)
 		m.groups = append(m.groups, nil)
 	}
@@ -120,10 +126,28 @@ func (m *Golony[T]) advance(g *group[T], c FatIndex[T]) (fi FatIndex[T], ok bool
 	return
 }
 
-func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
-	if c.index.check != c.pointer.check {
-		return
+func (m *Golony[T]) validFatIndex(c FatIndex[T]) bool {
+	if c.pointer == nil || int(c.index.group) >= len(m.groups) {
+		return false
 	}
+	g := m.groups[c.index.group]
+	if g == nil || c.index.offset >= g.capacity || g.skips[c.index.offset] != 0 {
+		return false
+	}
+	return c.pointer == &g.elements[c.index.offset] && c.index.check == c.pointer.check
+}
+
+func (m *Golony[T]) eraseAndClear(c FatIndex[T]) bool {
+	if !m.erase(c) {
+		return false
+	}
+	c.pointer.check = 0
+	c.pointer.v = m.zero
+	return true
+}
+
+// erase 要求调用方保证 FatIndex 已经和当前容器中的目标槽位一致。
+func (m *Golony[T]) erase(c FatIndex[T]) (ok bool) {
 	g := m.groups[c.index.group]
 	if g == nil || g.skips[c.index.offset] != 0 {
 		return
