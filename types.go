@@ -75,6 +75,10 @@ func From[T any](i EraseIndex) Index[T] {
 	return Index[T]{check: i.check, offset: i.offset, group: i.group}
 }
 
+func FromU64[T any](id uint64) Index[T] {
+	return *(*Index[T])(unsafe.Pointer(&id))
+}
+
 func (f FatIndex[T]) Index() Index[T] {
 	return f.index
 }

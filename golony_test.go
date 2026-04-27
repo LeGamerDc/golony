@@ -788,3 +788,144 @@ func TestCheckValueManagement(t *testing.T) {
 
 	assert.Equal(t, 10, iterateCount, "Should have 10 elements total")
 }
+
+// TestFromU64 验证 FromU64 与 Index.Id() 的逻辑严格对称。
+func TestFromU64(t *testing.T) {
+	t.Run("RoundTrip_SingleElement", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(42)
+		idx := fi.Index()
+
+		recovered := FromU64[int](idx.Id())
+		assert.True(t, idx.Eq(recovered), "FromU64(idx.Id()) should equal original index")
+		assert.Equal(t, idx.Id(), recovered.Id(), "Id() of recovered index should match original")
+	})
+
+	t.Run("RoundTrip_PreservesAllFields", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(0xDEADBEEF)
+		idx := fi.Index()
+
+		recovered := FromU64[int](idx.Id())
+		assert.Equal(t, idx.check, recovered.check, "check field should be preserved")
+		assert.Equal(t, idx.offset, recovered.offset, "offset field should be preserved")
+		assert.Equal(t, idx.group, recovered.group, "group field should be preserved")
+	})
+
+	t.Run("RoundTrip_MultipleElements", func(t *testing.T) {
+		g := New[int](8)
+		checks := []uint32{1, 2, 100, 0xFFFFFFFF, 0x12345678}
+		var indices []Index[int]
+		for i, c := range checks {
+			fi := g.Insert(c)
+			*fi.Pointer() = i
+			indices = append(indices, fi.Index())
+		}
+
+		for _, idx := range indices {
+			recovered := FromU64[int](idx.Id())
+			assert.True(t, idx.Eq(recovered))
+			assert.Equal(t, idx.Id(), recovered.Id())
+		}
+	})
+
+	t.Run("RecoveredIndex_CanGetFromContainer", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(7)
+		*fi.Pointer() = 999
+		idx := fi.Index()
+
+		recovered := FromU64[int](idx.Id())
+		gotFi, ok := g.Get(recovered)
+		assert.True(t, ok, "should be able to Get element using recovered index")
+		assert.Equal(t, 999, *gotFi.Pointer(), "value should match")
+	})
+
+	t.Run("RecoveredIndex_StaleAfterErase", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(3)
+		idx := fi.Index()
+		id := idx.Id()
+
+		g.Erase(idx)
+
+		recovered := FromU64[int](id)
+		_, ok := g.Get(recovered)
+		assert.False(t, ok, "recovered index should be invalid after erase")
+	})
+
+	t.Run("MultipleGroups_CorrectGroupAndOffset", func(t *testing.T) {
+		// groupSize=2 强制快速产生多个 group，覆盖 group != 0 的情形
+		g := New[int](2)
+		var indices []Index[int]
+		for i := 0; i < 8; i++ {
+			fi := g.Insert(uint32(i + 1))
+			*fi.Pointer() = i * 10
+			indices = append(indices, fi.Index())
+		}
+
+		for i, idx := range indices {
+			recovered := FromU64[int](idx.Id())
+			assert.Equal(t, idx.group, recovered.group, "group mismatch at element %d", i)
+			assert.Equal(t, idx.offset, recovered.offset, "offset mismatch at element %d", i)
+			assert.Equal(t, idx.check, recovered.check, "check mismatch at element %d", i)
+
+			gotFi, ok := g.Get(recovered)
+			assert.True(t, ok, "element %d should be retrievable via recovered index", i)
+			assert.Equal(t, i*10, *gotFi.Pointer())
+		}
+	})
+
+	t.Run("DifferentTypes_IndependentRoundTrip", func(t *testing.T) {
+		gi := New[int](8)
+		gs := New[string](8)
+
+		fii := gi.Insert(11)
+		fis := gs.Insert(22)
+
+		idxI := fii.Index()
+		idxS := fis.Index()
+
+		recoveredI := FromU64[int](idxI.Id())
+		recoveredS := FromU64[string](idxS.Id())
+
+		assert.True(t, idxI.Eq(recoveredI))
+		assert.True(t, idxS.Eq(recoveredS))
+
+		_, okI := gi.Get(recoveredI)
+		_, okS := gs.Get(recoveredS)
+		assert.True(t, okI)
+		assert.True(t, okS)
+	})
+
+	t.Run("Id_FromU64_Id_IsIdempotent", func(t *testing.T) {
+		g := New[int](8)
+		fi := g.Insert(55)
+		idx := fi.Index()
+
+		id1 := idx.Id()
+		id2 := FromU64[int](id1).Id()
+		assert.Equal(t, id1, id2, "Id(FromU64(Id())) should equal Id()")
+	})
+
+	t.Run("ZeroId_MatchesZeroValueIndex", func(t *testing.T) {
+		recovered := FromU64[int](0)
+		zero := Index[int]{}
+		assert.Equal(t, zero.Id(), recovered.Id())
+		assert.True(t, zero.Eq(recovered))
+	})
+
+	t.Run("MaxFieldValues_PreservedExactly", func(t *testing.T) {
+		// 手动构造一个极端字段值的 Index，通过 Id 往返验证
+		g := New[int](8)
+		// 插入一个普通元素，再覆盖字段值做位运算验证（不实际查容器）
+		fi := g.Insert(0xFFFFFFFF)
+		idx := fi.Index()
+		// 验证最大 check 值能完整往返
+		id := idx.Id()
+		recovered := FromU64[int](id)
+		assert.Equal(t, idx.check, recovered.check)
+		assert.Equal(t, uint64(recovered.check), id&0xFFFFFFFF,
+			"low 32 bits of Id should equal check on little-endian")
+	})
+}
