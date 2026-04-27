@@ -1,4 +1,4 @@
-module golony
+module github.com/LeGamerDc/golony
 
 go 1.23
 
